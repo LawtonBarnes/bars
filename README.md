@@ -7,6 +7,8 @@ compatible USB remote control.
 Built for a Raspberry Pi 3B+ running Raspberry Pi OS Bookworm, output via
 the analog composite video/audio jack to a CRT.
 
+![Running on a real CRT](./img/TV_BARS.jpg)
+
 ## Keyboard controls
 
 | Key | Action |
