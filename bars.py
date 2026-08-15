@@ -19,6 +19,7 @@ import fcntl
 import math
 import mmap
 import os
+import re
 import selectors
 import signal
 import socket
@@ -35,7 +36,7 @@ os.environ.setdefault("SDL_AUDIODRIVER", "alsa")
 
 import pygame  # noqa: E402  (must come after SDL env vars are set)
 
-VERSION = "1.2"
+VERSION = "1.3"
 
 BASE_DIR = Path(__file__).resolve().parent
 PATTERN_DIR = BASE_DIR / "patterns"
@@ -116,6 +117,47 @@ def get_custom_text():
     parser = configparser.ConfigParser()
     parser.read(SETTINGS_PATH)
     return parser.get("bars", "custom_text", fallback=DEFAULT_CUSTOM_TEXT)
+
+
+def get_saved_pattern():
+    parser = configparser.ConfigParser()
+    parser.read(SETTINGS_PATH)
+    return parser.get("bars", "pattern", fallback=None)
+
+
+def save_setting(section, key, value):
+    # Deliberately doesn't use configparser's own .write() -- it discards
+    # every comment in the file on rewrite, and settings.ini's comments
+    # are the actual documentation for each option. This is a surgical
+    # text edit instead: replace key's existing line in place if it's
+    # already there, otherwise append it right after the section header
+    # (creating the section too, if the file doesn't have it yet at
+    # all). Every other line, comment or not, is left byte-identical.
+    text = SETTINGS_PATH.read_text() if SETTINGS_PATH.exists() else ""
+    lines = text.splitlines(keepends=True)
+    section_header = f"[{section}]"
+    key_re = re.compile(rf"^\s*{re.escape(key)}\s*=")
+    in_section = False
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped == section_header:
+            in_section = True
+            continue
+        if in_section and stripped.startswith("[") and stripped != section_header:
+            lines.insert(i, f"{key} = {value}\n")
+            SETTINGS_PATH.write_text("".join(lines))
+            return
+        if in_section and key_re.match(line):
+            lines[i] = f"{key} = {value}\n"
+            SETTINGS_PATH.write_text("".join(lines))
+            return
+    if in_section:
+        lines.append(f"{key} = {value}\n")
+    else:
+        if lines and not lines[-1].endswith("\n"):
+            lines.append("\n")
+        lines.append(f"\n{section_header}\n{key} = {value}\n")
+    SETTINGS_PATH.write_text("".join(lines))
 
 
 def find_keyboard_devices():
@@ -230,7 +272,17 @@ class BarsApp:
 
         self.pattern_paths = load_pattern_paths()
         names = [p.name for p in self.pattern_paths]
-        self.index = names.index(DEFAULT_PATTERN) if DEFAULT_PATTERN in names else 0
+        # Prefer whatever was last live-tuned (see next_pattern) over the
+        # hardcoded default -- falls back cleanly to DEFAULT_PATTERN if
+        # nothing's been saved yet, or if the saved name no longer
+        # matches a real pattern file (e.g. one got renamed/removed).
+        saved_pattern = get_saved_pattern()
+        if saved_pattern and saved_pattern in names:
+            self.index = names.index(saved_pattern)
+        elif DEFAULT_PATTERN in names:
+            self.index = names.index(DEFAULT_PATTERN)
+        else:
+            self.index = 0
         self.image_cache = {}
 
         self.menu_fonts = {size: pygame.font.Font(str(FONT_PATH), size) for _, size in MENU_LINES if size}
@@ -377,6 +429,11 @@ class BarsApp:
         # +1 slot for the menu screen, which now sits in the rotation
         # alongside the image patterns instead of behind its own key.
         self.index = (self.index + step) % (len(self.pattern_paths) + 1)
+        # Only persist a real pattern, never the menu slot (index ==
+        # len(pattern_paths)) -- landing on the menu isn't a pattern
+        # choice worth remembering as next boot's default.
+        if self.index < len(self.pattern_paths):
+            save_setting("bars", "pattern", self.pattern_paths[self.index].name)
 
     def cycle_overlay(self, step):
         self.overlay = OVERLAY_CYCLE[(OVERLAY_CYCLE.index(self.overlay) + step) % len(OVERLAY_CYCLE)]
