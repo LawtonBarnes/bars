@@ -47,14 +47,6 @@ FRAME_W, FRAME_H = 720, 480
 DEFAULT_PATTERN = "BARS_0013_SMPTE-Bars.png"
 DEFAULT_CUSTOM_TEXT = "CUSTOM TEXT"
 
-# --identify: starts with the hostname overlay already on (no keypress
-# needed, since McBrain puppets have no input device attached) -- used
-# as STRINGS's idle-state default and its on-demand "IDENTIFY PUPPETS"
-# command, both for figuring out which physical Pi/CRT is which when
-# recabling. Pattern is already SMPTE bars by default, so no change
-# needed there.
-IDENTIFY_MODE = "--identify" in sys.argv
-
 ORANGE = (0xFF, 0xA5, 0x00)
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
@@ -288,7 +280,7 @@ class BarsApp:
         self.menu_fonts = {size: pygame.font.Font(str(FONT_PATH), size) for _, size in MENU_LINES if size}
         self.osd_font = pygame.font.Font(str(FONT_PATH), 36)
 
-        self.overlay = "hostname" if IDENTIFY_MODE else None  # None, "ip", "hostname", or "custom"
+        self.overlay = None  # None, "ip", "hostname", or "custom"
         self.tone_playing = False
         self.tone_sound = None
         self.power_dialog_active = False
