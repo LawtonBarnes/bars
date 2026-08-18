@@ -25,6 +25,7 @@ import signal
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import evdev
@@ -42,6 +43,8 @@ BASE_DIR = Path(__file__).resolve().parent
 PATTERN_DIR = BASE_DIR / "patterns"
 FONT_PATH = BASE_DIR / "VCR_OSD_MONO_1.001.ttf"
 SETTINGS_PATH = BASE_DIR / "settings.ini"
+SPLASH_PATH = BASE_DIR / "splash.png"  # optional -- see show_splash()
+SPLASH_SECONDS = 3.0
 
 FRAME_W, FRAME_H = 720, 480
 DEFAULT_PATTERN = "BARS_0013_SMPTE-Bars.png"
@@ -224,6 +227,31 @@ class FrameBuffer:
         os.close(self.fd)
 
 
+def show_splash(fb):
+    """Blocking splash shown once at launch, before the app's real
+    content appears -- purely cosmetic, so any failure (no splash.png
+    deployed yet, bad image) just skips straight to normal startup
+    instead of taking the whole app down over it. Scaled to fit within
+    the frame preserving aspect ratio (not stretched to fill) and
+    centered on black, since the source images aren't necessarily
+    FRAME_W x FRAME_H's exact 3:2 ratio."""
+    if not SPLASH_PATH.exists():
+        return
+    try:
+        img = pygame.image.load(str(SPLASH_PATH)).convert()
+    except (pygame.error, OSError) as exc:
+        print(f"Splash load failed: {exc}", file=sys.stderr)
+        return
+    canvas = pygame.Surface((FRAME_W, FRAME_H))
+    canvas.fill(BLACK)
+    img_w, img_h = img.get_size()
+    scale = min(FRAME_W / img_w, FRAME_H / img_h)
+    scaled = pygame.transform.smoothscale(img, (int(img_w * scale), int(img_h * scale)))
+    canvas.blit(scaled, ((FRAME_W - scaled.get_width()) // 2, (FRAME_H - scaled.get_height()) // 2))
+    fb.write_surface(canvas)
+    time.sleep(SPLASH_SECONDS)
+
+
 def make_tone_sound():
     n_samples = TONE_SAMPLE_RATE  # exactly 1 second -> loops with no click at 1kHz
     buf = array.array("h")
@@ -302,6 +330,8 @@ class BarsApp:
             self.console_graphics_mode = True
         except OSError as exc:
             print(f"Console graphics mode not available: {exc}", file=sys.stderr)
+
+        show_splash(self.fb)
 
     def _handle_signal(self, signum, frame):
         self._quit_requested = True
