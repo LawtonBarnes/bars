@@ -37,7 +37,7 @@ os.environ.setdefault("SDL_AUDIODRIVER", "alsa")
 
 import pygame  # noqa: E402  (must come after SDL env vars are set)
 
-VERSION = "1.3"
+VERSION = "1.4"
 
 BASE_DIR = Path(__file__).resolve().parent
 PATTERN_DIR = BASE_DIR / "patterns"
