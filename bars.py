@@ -44,7 +44,7 @@ PATTERN_DIR = BASE_DIR / "patterns"
 FONT_PATH = BASE_DIR / "VCR_OSD_MONO_1.001.ttf"
 SETTINGS_PATH = BASE_DIR / "settings.ini"
 SPLASH_PATH = BASE_DIR / "splash.png"  # optional -- see show_splash()
-SPLASH_SECONDS = 3.0
+SPLASH_SECONDS = 5.0
 
 FRAME_W, FRAME_H = 720, 480
 DEFAULT_PATTERN = "BARS_0013_SMPTE-Bars.png"
