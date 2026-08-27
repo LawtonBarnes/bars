@@ -13,7 +13,7 @@ the analog composite video/audio jack to a CRT.
 
 | Key | Action |
 |---|---|
-| `←` / `→` | Change pattern (cycles through all patterns, plus the menu/help screen) |
+| `←` / `→` | Change pattern (cycles through all patterns) |
 | `I` | Toggle IP address overlay |
 | `H` | Toggle hostname overlay |
 | `C` | Toggle custom text overlay (default "CUSTOM TEXT", editable in `settings.ini`) |
@@ -21,10 +21,10 @@ the analog composite video/audio jack to a CRT.
 | `U` | Toggle underscan (default off) |
 | `Q` / `Esc` | Quit to shell |
 
-The menu/help screen is not its own key — it sits in the `←`/`→` rotation
-right after the last image pattern.
-
-Default pattern on launch: `BARS_0013_SMPTE-Bars.png`.
+Default pattern on launch: whichever file sorts first in `patterns/` (the
+lowest `BARS_NNNN_` prefix) — currently `BARS_0001_SMPTE-Bars.png`. The
+last pattern viewed is remembered in `settings.ini` and takes priority on
+the next launch.
 
 ## Remote control
 
@@ -40,7 +40,7 @@ extra setup is needed beyond plugging it in.
 |---|---|
 | Power | Disabled — does nothing (see the logind step in "Installing" below for why it doesn't shut the Pi down) |
 | Home | Quit to shell (same as `Q`/`Esc`) |
-| Menu | Jump straight to the menu/help screen |
+| Menu | Disabled — does nothing (the menu/help screen was removed) |
 | Left / Right | Change pattern (same as arrow keys) |
 | Up / Down | Cycle the overlay: none → IP address → hostname → custom text → none |
 | Back | Toggle underscan (same as `U`) |

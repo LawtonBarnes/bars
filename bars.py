@@ -37,7 +37,7 @@ os.environ.setdefault("SDL_AUDIODRIVER", "alsa")
 
 import pygame  # noqa: E402  (must come after SDL env vars are set)
 
-VERSION = "1.4"
+VERSION = "1.5"
 
 BASE_DIR = Path(__file__).resolve().parent
 PATTERN_DIR = BASE_DIR / "patterns"
@@ -47,7 +47,6 @@ SPLASH_PATH = BASE_DIR / "splash.png"  # optional -- see show_splash()
 SPLASH_SECONDS = 5.0
 
 FRAME_W, FRAME_H = 720, 480
-DEFAULT_PATTERN = "BARS_0013_SMPTE-Bars.png"
 DEFAULT_CUSTOM_TEXT = "CUSTOM TEXT"
 
 ORANGE = (0xFF, 0xA5, 0x00)
@@ -69,19 +68,6 @@ TONE_AMPLITUDE = 32767  # full-scale 16-bit signed == 0 dBFS
 KDSETMODE = 0x4B3A
 KD_TEXT = 0x00
 KD_GRAPHICS = 0x01
-
-MENU_LINES = [
-    ("NTSC TEST PATTERN GENERATOR", 32),
-    ("", 0),
-    ("LEFT/RIGHT - CHANGE PATTERN", 32),
-    ("UP/DOWN - CYCLE OVERLAY", 32),
-    ("I - IP ADDRESS", 32),
-    ("H - HOSTNAME", 32),
-    ("C - CUSTOM TEXT", 32),
-    ("T - TONE", 32),
-    ("Q, <ESC>, or REMOTE BACK - APP MENU", 32),
-    ("REMOTE HOME - HEALTH MONITOR", 32),
-]
 
 
 def load_pattern_paths():
@@ -293,19 +279,15 @@ class BarsApp:
         self.pattern_paths = load_pattern_paths()
         names = [p.name for p in self.pattern_paths]
         # Prefer whatever was last live-tuned (see next_pattern) over the
-        # hardcoded default -- falls back cleanly to DEFAULT_PATTERN if
-        # nothing's been saved yet, or if the saved name no longer
-        # matches a real pattern file (e.g. one got renamed/removed).
+        # default -- falls back to index 0, i.e. whichever pattern sorts
+        # first by the patterns folder's own BARS_NNNN_ numbering, if
+        # nothing's been saved yet or the saved name no longer matches a
+        # real pattern file (e.g. one got renamed/removed).
         saved_pattern = get_saved_pattern()
-        if saved_pattern and saved_pattern in names:
-            self.index = names.index(saved_pattern)
-        elif DEFAULT_PATTERN in names:
-            self.index = names.index(DEFAULT_PATTERN)
-        else:
-            self.index = 0
+        self.index = names.index(saved_pattern) if saved_pattern and saved_pattern in names else 0
         self.image_cache = {}
 
-        self.menu_fonts = {size: pygame.font.Font(str(FONT_PATH), size) for _, size in MENU_LINES if size}
+        self.dialog_font = pygame.font.Font(str(FONT_PATH), 32)
         self.osd_font = pygame.font.Font(str(FONT_PATH), 36)
 
         self.overlay = None  # None, "ip", "hostname", or "custom"
@@ -357,40 +339,14 @@ class BarsApp:
         box.blit(text_surf, (pad_x, pad_y))
         canvas.blit(box, ((FRAME_W - box.get_width()) // 2, (FRAME_H - box.get_height()) // 2))
 
-    def build_menu_canvas(self):
-        canvas = pygame.Surface((FRAME_W, FRAME_H))
-        canvas.fill(BLACK)
-        rendered = []
-        for text, size in MENU_LINES:
-            if size == 0:
-                rendered.append(None)
-            else:
-                rendered.append(self.menu_fonts[size].render(text, True, ORANGE))
-        gap = 10
-        total_h = sum((s.get_height() if s else 22) for s in rendered) + gap * (len(rendered) - 1)
-        y = (FRAME_H - total_h) // 2
-        for s in rendered:
-            if s:
-                canvas.blit(s, ((FRAME_W - s.get_width()) // 2, y))
-                y += s.get_height() + gap
-            else:
-                y += 22 + gap
-        return canvas
-
-    def is_menu(self):
-        return self.index == len(self.pattern_paths)
-
     def render(self):
-        if self.is_menu():
-            canvas = self.build_menu_canvas()
-        else:
-            canvas = self.build_pattern_canvas()
-            if self.overlay == "ip":
-                self.draw_osd_box(canvas, get_ip_address())
-            elif self.overlay == "hostname":
-                self.draw_osd_box(canvas, get_hostname())
-            elif self.overlay == "custom":
-                self.draw_osd_box(canvas, get_custom_text())
+        canvas = self.build_pattern_canvas()
+        if self.overlay == "ip":
+            self.draw_osd_box(canvas, get_ip_address())
+        elif self.overlay == "hostname":
+            self.draw_osd_box(canvas, get_hostname())
+        elif self.overlay == "custom":
+            self.draw_osd_box(canvas, get_custom_text())
 
         if self.power_dialog_active:
             self.draw_power_dialog(canvas)
@@ -400,7 +356,7 @@ class BarsApp:
     def draw_power_dialog(self, canvas):
         lines = ["ARE YOU SURE YOU WANT", "TO SHUT DOWN?"]
         line_surfs = [self.osd_font.render(line, True, WHITE) for line in lines]
-        option_font = self.menu_fonts[32]
+        option_font = self.dialog_font
         option_surfs = [
             option_font.render(opt, True, BLACK if i == self.power_dialog_selection else ORANGE)
             for i, opt in enumerate(POWER_OPTIONS)
@@ -448,14 +404,8 @@ class BarsApp:
         self.set_tone(not self.tone_playing)
 
     def next_pattern(self, step):
-        # +1 slot for the menu screen, which now sits in the rotation
-        # alongside the image patterns instead of behind its own key.
-        self.index = (self.index + step) % (len(self.pattern_paths) + 1)
-        # Only persist a real pattern, never the menu slot (index ==
-        # len(pattern_paths)) -- landing on the menu isn't a pattern
-        # choice worth remembering as next boot's default.
-        if self.index < len(self.pattern_paths):
-            save_setting("bars", "pattern", self.pattern_paths[self.index].name)
+        self.index = (self.index + step) % len(self.pattern_paths)
+        save_setting("bars", "pattern", self.pattern_paths[self.index].name)
 
     def cycle_overlay(self, step):
         self.overlay = OVERLAY_CYCLE[(OVERLAY_CYCLE.index(self.overlay) + step) % len(OVERLAY_CYCLE)]
@@ -469,10 +419,7 @@ class BarsApp:
         # to jump straight to Health Monitor, skipping the App Menu --
         # Back/Menu/Q/Esc exit normally, which just returns to the App Menu
         # (their immediate parent). See menu.py's launch_app() for the
-        # sentinel check. KEY_COMPOSE (the remote's hamburger/Menu button)
-        # used to jump to this app's own internal help screen -- repurposed
-        # for the new system-wide "open App Menu" meaning; the help screen
-        # is still reachable via Left/Right (it's in the pattern rotation).
+        # sentinel check.
         if self.power_dialog_active:
             return self.handle_power_dialog_keycode(code)
         if code in (ecodes.KEY_HOMEPAGE, ecodes.KEY_HOME):
