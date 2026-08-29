@@ -56,6 +56,8 @@ BLACK = (0, 0, 0)
 OVERLAY_CYCLE = [None, "ip", "hostname", "custom"]
 POWER_OPTIONS = ["NO", "YES", "RESTART"]
 MOUSE_MOVE_THRESHOLD = 12  # cumulative REL_X/REL_Y units before it counts as one direction press
+ABS_CENTER = 127  # cheap USB gamepad D-pad: ABS_X/ABS_Y rest at 127, jump to 0/255 at full deflection
+ABS_DEADZONE = 40
 
 # See menu.py -- Home exits with this so menu.py's launch_app() knows to
 # hand off to Health Monitor instead of redrawing its own app list.
@@ -298,6 +300,7 @@ class BarsApp:
         self.pending_power_action = None  # None, "shutdown", or "restart"
         self.pending_exit_code = 0  # 0 or EXIT_GOTO_HOME
         self._rel_accum = {"x": 0, "y": 0}
+        self._abs_zone = {"x": 0, "y": 0}  # -1/0/1, last reported ABS_X/ABS_Y deflection zone
 
         # Tell the console driver to stop drawing its own cursor/text over
         # our framebuffer writes. Only possible on a real VT (not over SSH,
@@ -495,6 +498,34 @@ class BarsApp:
             synthetic = ecodes.KEY_DOWN if accum > 0 else ecodes.KEY_UP
         return self.handle_keycode(synthetic)
 
+    def handle_abs_event(self, code, value):
+        """Cheap USB gamepad D-pad support -- its Left/Right/Up/Down report as
+        ABS_X/ABS_Y jumping straight from center (127) to a rail (0 or 255),
+        not as KEY_LEFT/etc or REL motion. Edge-triggered on entering a
+        deflected zone so a press fires one direction change, same as a real
+        keypress, rather than repeat-firing every event while held at the rail."""
+        if code == ecodes.ABS_X:
+            axis = "x"
+        elif code == ecodes.ABS_Y:
+            axis = "y"
+        else:
+            return False
+        if value < ABS_CENTER - ABS_DEADZONE:
+            zone = -1
+        elif value > ABS_CENTER + ABS_DEADZONE:
+            zone = 1
+        else:
+            zone = 0
+        prev_zone = self._abs_zone[axis]
+        self._abs_zone[axis] = zone
+        if zone == 0 or zone == prev_zone:
+            return False
+        if axis == "x":
+            synthetic = ecodes.KEY_RIGHT if zone > 0 else ecodes.KEY_LEFT
+        else:
+            synthetic = ecodes.KEY_DOWN if zone > 0 else ecodes.KEY_UP
+        return self.handle_keycode(synthetic)
+
     def run(self):
         try:
             self.render()
@@ -507,6 +538,8 @@ class BarsApp:
                             result = self.handle_keycode(event.code)
                         elif event.type == ecodes.EV_REL:
                             result = self.handle_rel_event(event.code, event.value)
+                        elif event.type == ecodes.EV_ABS:
+                            result = self.handle_abs_event(event.code, event.value)
                         else:
                             continue
                         if result == "quit":
