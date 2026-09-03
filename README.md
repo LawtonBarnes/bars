@@ -55,6 +55,18 @@ note that `/dev/input/eventN` numbering is not stable across reboots, so
 don't hardcode device paths — filter by capability instead (as
 `find_keyboard_devices()` in `bars.py` does).
 
+## McBrain fleet integration
+
+BARS also runs as an assignable app on a [McBrain](https://github.com/LawtonBarnes/mcbrain)
+fleet, supervised by [STRINGS](https://github.com/LawtonBarnes/strings)
+instead of being launched by hand. One extra piece exists purely for
+that context: an `--identify` flag (`bars --identify`) that forces the
+hostname overlay on at startup, since puppets have no keyboard/remote
+of their own to press `H` with -- STRINGS/SCRUTE use this to broadcast
+a "flash your hostname" command to every puppet at once, for matching a
+physical CRT to its Pi during cabling. Standalone (non-fleet) use is
+unaffected; this flag is a no-op unless something explicitly passes it.
+
 ## Files
 
 - `bars.py` — the program. Deployed to `/opt/bars/bars.py` on the Pi.
