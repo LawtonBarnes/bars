@@ -19,7 +19,6 @@ import fcntl
 import math
 import mmap
 import os
-import re
 import selectors
 import signal
 import socket
@@ -100,47 +99,6 @@ def get_custom_text():
     parser = configparser.ConfigParser()
     parser.read(SETTINGS_PATH)
     return parser.get("bars", "custom_text", fallback=DEFAULT_CUSTOM_TEXT)
-
-
-def get_saved_pattern():
-    parser = configparser.ConfigParser()
-    parser.read(SETTINGS_PATH)
-    return parser.get("bars", "pattern", fallback=None)
-
-
-def save_setting(section, key, value):
-    # Deliberately doesn't use configparser's own .write() -- it discards
-    # every comment in the file on rewrite, and settings.ini's comments
-    # are the actual documentation for each option. This is a surgical
-    # text edit instead: replace key's existing line in place if it's
-    # already there, otherwise append it right after the section header
-    # (creating the section too, if the file doesn't have it yet at
-    # all). Every other line, comment or not, is left byte-identical.
-    text = SETTINGS_PATH.read_text() if SETTINGS_PATH.exists() else ""
-    lines = text.splitlines(keepends=True)
-    section_header = f"[{section}]"
-    key_re = re.compile(rf"^\s*{re.escape(key)}\s*=")
-    in_section = False
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped == section_header:
-            in_section = True
-            continue
-        if in_section and stripped.startswith("[") and stripped != section_header:
-            lines.insert(i, f"{key} = {value}\n")
-            SETTINGS_PATH.write_text("".join(lines))
-            return
-        if in_section and key_re.match(line):
-            lines[i] = f"{key} = {value}\n"
-            SETTINGS_PATH.write_text("".join(lines))
-            return
-    if in_section:
-        lines.append(f"{key} = {value}\n")
-    else:
-        if lines and not lines[-1].endswith("\n"):
-            lines.append("\n")
-        lines.append(f"\n{section_header}\n{key} = {value}\n")
-    SETTINGS_PATH.write_text("".join(lines))
 
 
 def find_keyboard_devices():
@@ -279,14 +237,10 @@ class BarsApp:
             self.selector.register(dev, selectors.EVENT_READ)
 
         self.pattern_paths = load_pattern_paths()
-        names = [p.name for p in self.pattern_paths]
-        # Prefer whatever was last live-tuned (see next_pattern) over the
-        # default -- falls back to index 0, i.e. whichever pattern sorts
-        # first by the patterns folder's own BARS_NNNN_ numbering, if
-        # nothing's been saved yet or the saved name no longer matches a
-        # real pattern file (e.g. one got renamed/removed).
-        saved_pattern = get_saved_pattern()
-        self.index = names.index(saved_pattern) if saved_pattern and saved_pattern in names else 0
+        # Always start on whichever pattern sorts first by the patterns
+        # folder's own BARS_NNNN_ numbering (SMPTE bars) -- pattern choice
+        # is a runtime-only setting, not persisted across launches.
+        self.index = 0
         self.image_cache = {}
 
         self.dialog_font = pygame.font.Font(str(FONT_PATH), 32)
@@ -408,7 +362,6 @@ class BarsApp:
 
     def next_pattern(self, step):
         self.index = (self.index + step) % len(self.pattern_paths)
-        save_setting("bars", "pattern", self.pattern_paths[self.index].name)
 
     def cycle_overlay(self, step):
         self.overlay = OVERLAY_CYCLE[(OVERLAY_CYCLE.index(self.overlay) + step) % len(OVERLAY_CYCLE)]
