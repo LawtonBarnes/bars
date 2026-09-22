@@ -229,3 +229,13 @@ If a future Pi OS release fixes composite support under
 `vc4-kms-v3d`, it may be possible to simplify this back to a normal
 `pygame.display.flip()`-based program — worth a quick check before
 reapplying all of the above from scratch.
+
+## Per-machine settings
+
+`settings.ini` is per-machine and not tracked in git (each fleet host keeps
+its own values, e.g. calibration or preferences), so `git pull` never
+conflicts with it. A fresh install copies the template first:
+
+    cp settings.example.ini settings.ini
+
+If `settings.ini` is missing, the app falls back to its built-in defaults.
