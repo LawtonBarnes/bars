@@ -36,7 +36,7 @@ os.environ.setdefault("SDL_AUDIODRIVER", "alsa")
 
 import pygame  # noqa: E402  (must come after SDL env vars are set)
 
-VERSION = "1.5"
+VERSION = "1.6"
 
 BASE_DIR = Path(__file__).resolve().parent
 PATTERN_DIR = BASE_DIR / "patterns"
@@ -44,6 +44,7 @@ FONT_PATH = BASE_DIR / "VCR_OSD_MONO_1.001.ttf"
 SETTINGS_PATH = BASE_DIR / "settings.ini"
 SPLASH_PATH = BASE_DIR / "splash.png"  # optional -- see show_splash()
 SPLASH_SECONDS = 5.0
+LOGO_PATH = BASE_DIR / "metalshop-logo.png"  # ABOUT screen -- see draw_about_screen()
 
 FRAME_W, FRAME_H = 720, 480
 DEFAULT_CUSTOM_TEXT = "CUSTOM TEXT"
@@ -198,6 +199,58 @@ def show_splash(fb):
     time.sleep(SPLASH_SECONDS)
 
 
+# ABOUT screen (2026-09-22, fleet-wide -- same layout in every app except
+# WX, duplicated per this codebase's no-shared-library convention). BACK
+# toggles it from the app's home level. Title top center, settings in the
+# middle, METAL SHOP logo bottom center. The logo is square-pixel art, so
+# it's stretched horizontally by 720/640 to look right on the CRT's
+# narrower-than-square 720x480 pixels.
+ABOUT_MARGIN_Y = 48  # keeps title/logo inside the CRT's visible area
+ABOUT_LINE_GAP = 8
+ABOUT_COLUMN_GAP = 16
+LOGO_X_STRETCH = 720 / 640
+
+
+def load_about_logo():
+    try:
+        img = pygame.image.load(str(LOGO_PATH)).convert_alpha()
+    except (pygame.error, OSError) as exc:
+        print(f"Logo load failed: {exc}", file=sys.stderr)
+        return None
+    w, h = img.get_size()
+    return pygame.transform.smoothscale(img, (round(w * LOGO_X_STRETCH), h))
+
+
+def draw_about_screen(canvas, title_font, body_font, logo, title, rows):
+    """`rows` is a list of (label, value) -- labels right-aligned in an
+    orange column, values left-aligned in white beside them, the block
+    centered in the space between the title and the logo. A row with an
+    empty label continues the previous row's value column."""
+    frame_w, frame_h = canvas.get_size()
+    canvas.fill(BLACK)
+    title_surf = title_font.render(title, True, ORANGE)
+    canvas.blit(title_surf, ((frame_w - title_surf.get_width()) // 2, ABOUT_MARGIN_Y))
+    top = ABOUT_MARGIN_Y + title_surf.get_height()
+    bottom = frame_h - ABOUT_MARGIN_Y
+    if logo is not None:
+        bottom -= logo.get_height()
+        canvas.blit(logo, ((frame_w - logo.get_width()) // 2, bottom))
+    if not rows:
+        return
+    label_surfs = [body_font.render(label, True, ORANGE) if label else None for label, _ in rows]
+    value_surfs = [body_font.render(str(value), True, WHITE) for _, value in rows]
+    label_w = max((l.get_width() for l in label_surfs if l), default=0)
+    value_w = max(v.get_width() for v in value_surfs)
+    line_h = body_font.get_linesize() + ABOUT_LINE_GAP
+    x0 = (frame_w - (label_w + ABOUT_COLUMN_GAP + value_w)) // 2
+    y = top + (bottom - top - line_h * len(rows)) // 2
+    for label_surf, value_surf in zip(label_surfs, value_surfs):
+        if label_surf:
+            canvas.blit(label_surf, (x0 + label_w - label_surf.get_width(), y))
+        canvas.blit(value_surf, (x0 + label_w + ABOUT_COLUMN_GAP, y))
+        y += line_h
+
+
 def make_tone_sound():
     n_samples = TONE_SAMPLE_RATE  # exactly 1 second -> loops with no click at 1kHz
     buf = array.array("h")
@@ -245,6 +298,9 @@ class BarsApp:
 
         self.dialog_font = pygame.font.Font(str(FONT_PATH), 32)
         self.osd_font = pygame.font.Font(str(FONT_PATH), 36)
+        self.about_body_font = pygame.font.Font(str(FONT_PATH), 26)
+        self.about_logo = load_about_logo()
+        self.about_active = False
 
         self.overlay = None  # None, "ip", "hostname", or "custom"
         self.tone_playing = False
@@ -297,6 +353,17 @@ class BarsApp:
         canvas.blit(box, ((FRAME_W - box.get_width()) // 2, (FRAME_H - box.get_height()) // 2))
 
     def render(self):
+        if self.about_active:
+            canvas = pygame.Surface((FRAME_W, FRAME_H))
+            draw_about_screen(canvas, self.osd_font, self.about_body_font, self.about_logo,
+                              f"BARS ULRICH {VERSION}", [
+                                  ("CUSTOM TEXT", get_custom_text()),
+                                  ("PATTERNS", len(self.pattern_paths)),
+                              ])
+            if self.power_dialog_active:
+                self.draw_power_dialog(canvas)
+            self.fb.write_surface(canvas)
+            return
         canvas = self.build_pattern_canvas()
         if self.overlay == "ip":
             self.draw_osd_box(canvas, get_ip_address())
@@ -373,15 +440,25 @@ class BarsApp:
         # equivalents) -- see the evdev capture in the README for how those were identified.
         # Home is distinct from Back/Menu/Q/Esc: it exits with EXIT_GOTO_HOME
         # to jump straight to Health Monitor, skipping the App Menu --
-        # Back/Menu/Q/Esc exit normally, which just returns to the App Menu
+        # Menu/Q/Esc exit normally, which just returns to the App Menu
         # (their immediate parent). See menu.py's launch_app() for the
-        # sentinel check.
+        # sentinel check. Back toggles the ABOUT screen instead of
+        # quitting (2026-09-22) -- under STRINGS, quitting just meant an
+        # unwanted restart. While ABOUT is up, only Back/Home/Power/Q/Esc
+        # /Menu do anything, so nothing changes unseen behind it.
         if self.power_dialog_active:
             return self.handle_power_dialog_keycode(code)
         if code in (ecodes.KEY_HOMEPAGE, ecodes.KEY_HOME):
             return "quit_home"
-        elif code in (ecodes.KEY_Q, ecodes.KEY_ESC, ecodes.KEY_BACK, ecodes.KEY_COMPOSE):
+        elif code in (ecodes.KEY_Q, ecodes.KEY_ESC, ecodes.KEY_COMPOSE):
             return "quit"
+        elif code == ecodes.KEY_BACK:
+            self.about_active = not self.about_active
+        elif code == ecodes.KEY_POWER:
+            self.power_dialog_active = True
+            self.power_dialog_selection = 0
+        elif self.about_active:
+            return False
         elif code == ecodes.KEY_LEFT:
             self.next_pattern(-1)
         elif code == ecodes.KEY_RIGHT:
@@ -405,9 +482,6 @@ class BarsApp:
         elif code in (ecodes.KEY_VOLUMEUP, ecodes.KEY_F2):
             self.set_tone(True)
             return False
-        elif code == ecodes.KEY_POWER:
-            self.power_dialog_active = True
-            self.power_dialog_selection = 0
         else:
             return False
         return True
