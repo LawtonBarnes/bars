@@ -22,9 +22,7 @@ the analog composite video/audio jack to a CRT.
 | `Q` / `Esc` | Quit to shell |
 
 Default pattern on launch: whichever file sorts first in `patterns/` (the
-lowest `BARS_NNNN_` prefix) — currently `BARS_0001_SMPTE-Bars.png`. The
-last pattern viewed is remembered in `settings.ini` and takes priority on
-the next launch.
+lowest `BARS_NNNN_` prefix) — currently `BARS_0000_Bars.png`.
 
 ## Remote control
 
