@@ -65,6 +65,73 @@ a "flash your hostname" command to every puppet at once, for matching a
 physical CRT to its Pi during cabling. Standalone (non-fleet) use is
 unaffected; this flag is a no-op unless something explicitly passes it.
 
+## Pattern levels (how these differ from broadcast SMPTE bars)
+
+The patterns are built for what the Pi's composite output actually does,
+not copied from broadcast specs. The main rule is **RGB 0 is black**.
+
+- **The Pi adds the 7.5 IRE setup itself.** With the default
+  `sdtv_mode=0` (US NTSC), the firmware outputs RGB 0 at 7.5 IRE, so the
+  patterns must not also build that pedestal in. Earlier patterns put
+  black at about RGB 20, which counted setup twice and made every other
+  app look too bright after calibration. Every app on the fleet uses
+  RGB 0 for black, and so do the patterns.
+- **There's no blacker-than-black.** The Pi can't output anything below
+  RGB 0, so a true SMPTE PLUGE (−4% / 0 / +4%) is impossible. Both the
+  PLUGE pattern and the PLUGE strip under the color bars use **RGB 8**
+  (about +3%) and **RGB 16** (about +6%) on an RGB 0 background. In the
+  color bars' strip the order is 8 | 0 | 16, so each bar has black on
+  both sides.
+- **The framebuffer is 16-bit (RGB565).** There are only 32 grey levels,
+  and a grey that isn't a multiple of 8 gets a faint green tint near
+  black. Near-black values in the patterns are multiples of 8. The
+  Step-Wedge pattern deliberately includes 4, 12, 20 and 28 so you can
+  see this on the CRT.
+- **Colors are capped at 75%.** The color bars and every row of
+  Color-Scale top out at RGB 191, which keeps composite peaks around
+  100 IRE. The full-field Red, Green and Blue purity patterns are the
+  only saturated 255 colors.
+- **Horizontal lines are at least 2 px tall.** The output is 480i, so a
+  1-pixel line lands in one field only and flickers at 30 Hz.
+- **Geometry is pre-stretched for 4:3.** 720x480 is shown on a 4:3
+  screen, so each pixel is about 11% narrower than it is tall. Circles
+  and grid cells are drawn 1.125x wider than tall so they look round and
+  square on the CRT, and the photos are already squeezed to match.
+
+The master for all patterns is a layered PSD kept outside the repo. Edit
+there, then export 720x480 8-bit RGB PNGs into `patterns/`.
+
+## Adjusting a CRT
+
+Warm the set up for 15–20 minutes and set the room lighting you'll
+normally watch in. Then:
+
+1. **Brightness (PLUGE):** turn brightness down until the whole PLUGE
+   area is black, then bring it up slowly until the **RGB 8** bar is
+   just barely visible. Stop there. The **RGB 16** bar should be clearly
+   visible and the background should still be black. This works
+   differently from broadcast PLUGE, where you match the sub-black bar
+   to black: here there's no sub-black bar, so you aim for
+   "barely visible."
+2. **Contrast (PLUGE's white block or White):** raise contrast until
+   whites are bright, but stop before they bloom, smear, or the picture
+   size starts to change. Check the grey blocks still step evenly.
+3. **Recheck brightness,** because contrast and brightness affect each
+   other.
+4. **Color and tint (color bars, blue-only):** switch the set to
+   blue-only if it has that mode. You'll see four lit bars: grey, cyan,
+   magenta and blue. Adjust color (saturation) until the two outer bars
+   (grey and blue) match the small strip directly below them. Then
+   adjust tint (hue) until the two inner bars (cyan and magenta) match
+   theirs. Go back and forth until all four match. Sets without blue-only mode can only be judged by
+   eye on the bars and Skin-Tones.
+5. **Check:** Gray-Scale and Step-Wedge should step smoothly, with the
+   near-black steps just separated from black. Nat-Geo, Skin-Tones and
+   Adams give a real-picture sanity check.
+
+Geometry and convergence use Safe-Title, Alignment, Grid and Convergence.
+Skip color and tint on black-and-white sets.
+
 ## Files
 
 - `bars.py` — the program. Deployed to `/opt/bars/bars.py` on the Pi.
