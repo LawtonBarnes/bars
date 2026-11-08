@@ -1,5 +1,7 @@
 # NTSC Test Pattern Generator (`bars`)
 
+> **Standalone:** runs on a single Raspberry Pi with a composite CRT. Fleet integration (STRINGS/SCRUTE) is optional.
+
 A Raspberry Pi appliance that outputs NTSC color bars and other test
 patterns over composite video, controlled from the keyboard or a
 compatible USB remote control.
