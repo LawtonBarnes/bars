@@ -103,6 +103,28 @@ not copied from broadcast specs. The main rule is **RGB 0 is black**.
 The master for all patterns is a layered PSD kept outside the repo. Edit
 there, then export 720x480 8-bit RGB PNGs into `patterns/`.
 
+## HD (16:9 screens)
+
+On a 16:9 screen (HIDEF's Samsung HD CRT at 1920x1080), BARS switches to
+HD:
+- **Canvas:** 1920x1080 with square pixels.
+- **Patterns:** a separate set in `patterns-hd/` (`BARS-HD_*.png`, 1920x1080).
+- **Overlays:** the OSD, power dialog and ABOUT screen scale up to match.
+  ABOUT's DISPLAY row shows which mode is running.
+
+`display` in `settings.ini` picks the mode:
+
+| Value | Effect |
+| --- | --- |
+| `auto` (default) | HD on a 16:9 screen when `patterns-hd/` has patterns, SD everywhere else |
+| `sd` | Always SD. On a 16:9 screen the 4:3 picture is pillarboxed in black |
+| `hd` | Always HD. On a 4:3 screen the 16:9 picture is letterboxed in black |
+
+4:3 content is never stretched to fill a 16:9 screen, and 16:9 content is
+never squeezed onto a 4:3 one. The splash is SD art, so it's pillarboxed on
+HD. The HD patterns' master PSD is also kept outside the repo
+(`BARS-HD-PATTERNS.psd`).
+
 ## Adjusting a CRT
 
 Warm the set up for 15–20 minutes and set the room lighting you'll
@@ -146,11 +168,12 @@ Skip color and tint on black-and-white sets.
   the file list is only read once at launch, so `bars` needs a restart to
   pick up additions or removals. The text after the number
   (e.g. `_SMPTE-Bars`) is cosmetic and isn't read by the program. Images
-  should be 720x480 — `bars.py` blits patterns onto the canvas at native
-  size with no scaling (except in underscan mode), so a mismatched size
-  won't fill the screen correctly.
+  should be 720x480. A pattern at any other size is scaled to fill the
+  canvas.
+- `patterns-hd/*.png` — HD patterns, 1920x1080, `BARS-HD_*.png`, same
+  numbering rules. See **HD (16:9 screens)** above.
 - `VCR_OSD_MONO_1.001.ttf` — OSD font. Deployed to `/opt/bars/`.
-- `settings.ini` — user-editable settings, currently just `custom_text`
+- `settings.ini` — user-editable settings: `display` (see HD above) and `custom_text`
   (shown by the `C` key or the remote's Up/Down overlay cycle, default
   "CUSTOM TEXT"). To change the displayed text, edit `custom_text` in
   this file — no code change or restart needed. Deployed to

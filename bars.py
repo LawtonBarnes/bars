@@ -46,7 +46,17 @@ SPLASH_PATH = BASE_DIR / "splash.png"  # optional -- see show_splash()
 SPLASH_SECONDS = 5.0
 LOGO_PATH = BASE_DIR / "metalshop-logo.png"  # ABOUT screen -- see draw_about_screen()
 
+# SD draws on a 720x480 canvas, shown 4:3 (the composite CRTs' non-square
+# pixels). HD draws on 1920x1080 (square pixels, 16:9) with its own
+# patterns. settings.ini `display` picks: auto (HD on a 16:9 screen when
+# patterns-hd/ has patterns), sd, or hd. FrameBuffer.write_surface()
+# fits either canvas to the screen at its own aspect, so SD on a 16:9
+# screen is pillarboxed in black and never stretched.
 FRAME_W, FRAME_H = 720, 480
+HD_FRAME_W, HD_FRAME_H = 1920, 1080
+HD_PATTERN_DIR = BASE_DIR / "patterns-hd"
+WIDE_ASPECT = 1.6  # a framebuffer or canvas at least this wide counts as 16:9
+DISPLAY_MODES = ("auto", "sd", "hd")
 DEFAULT_CUSTOM_TEXT = "CUSTOM TEXT"
 
 ORANGE = (0xFF, 0xA5, 0x00)
@@ -72,11 +82,27 @@ KD_TEXT = 0x00
 KD_GRAPHICS = 0x01
 
 
-def load_pattern_paths():
+def load_pattern_paths(hd=False):
+    if hd:
+        return sorted(HD_PATTERN_DIR.glob("BARS-HD_*.png"))
     paths = sorted(PATTERN_DIR.glob("BARS_*.png"))
     if not paths:
         sys.exit(f"No patterns found in {PATTERN_DIR}")
     return paths
+
+
+def get_display_setting():
+    parser = configparser.ConfigParser()
+    parser.read(SETTINGS_PATH)
+    mode = parser.get("bars", "display", fallback="auto").strip().lower()
+    return mode if mode in DISPLAY_MODES else "auto"
+
+
+def display_aspect(width, height):
+    """How a canvas or framebuffer of this size looks on its screen:
+    anything at least WIDE_ASPECT is 16:9, everything else is a 4:3 CRT
+    (720x480 composite included, despite its 3:2 pixel grid)."""
+    return 16 / 9 if width / height >= WIDE_ASPECT else 4 / 3
 
 
 def get_ip_address():
@@ -147,10 +173,31 @@ class FrameBuffer:
         self.mm = mmap.mmap(self.fd, size, mmap.MAP_SHARED, mmap.PROT_WRITE | mmap.PROT_READ)
         if self.bpp not in (16, 32):
             raise RuntimeError(f"Unsupported framebuffer depth: {self.bpp}bpp")
+        self.wide = self.width / self.height >= WIDE_ASPECT
+        self._full = None  # black full-screen surface for pillar/letterboxing
+
+    def content_size(self, surface):
+        """Size to scale `surface` to so it keeps its own aspect on this
+        screen: full screen when the aspects match, otherwise narrower
+        (pillarbox) or shorter (letterbox), centered on black."""
+        screen = display_aspect(self.width, self.height)
+        content = display_aspect(*surface.get_size())
+        if content < screen:
+            return round(self.width * content / screen), self.height
+        if content > screen:
+            return self.width, round(self.height * screen / content)
+        return self.width, self.height
 
     def write_surface(self, surface):
-        if surface.get_size() != (self.width, self.height):
-            surface = pygame.transform.scale(surface, (self.width, self.height))
+        size = self.content_size(surface)
+        if surface.get_size() != size:
+            surface = pygame.transform.scale(surface, size)
+        if size != (self.width, self.height):
+            if self._full is None:
+                self._full = pygame.Surface((self.width, self.height))
+            self._full.fill(BLACK)
+            self._full.blit(surface, ((self.width - size[0]) // 2, (self.height - size[1]) // 2))
+            surface = self._full
         arr = pygame.surfarray.pixels3d(surface).transpose(1, 0, 2)  # (H, W, RGB) uint8
         if self.bpp == 16:
             r = arr[:, :, 0].astype(np.uint16) >> 3
@@ -211,27 +258,32 @@ ABOUT_COLUMN_GAP = 16
 LOGO_X_STRETCH = 720 / 640
 
 
-def load_about_logo():
+def load_about_logo(hd=False, scale=1.0):
+    """HD's pixels are square, so there the logo only scales up with
+    the canvas -- no 720/640 stretch."""
     try:
         img = pygame.image.load(str(LOGO_PATH)).convert_alpha()
     except (pygame.error, OSError) as exc:
         print(f"Logo load failed: {exc}", file=sys.stderr)
         return None
     w, h = img.get_size()
-    return pygame.transform.smoothscale(img, (round(w * LOGO_X_STRETCH), h))
+    x_stretch = 1.0 if hd else LOGO_X_STRETCH
+    return pygame.transform.smoothscale(img, (round(w * x_stretch * scale), round(h * scale)))
 
 
-def draw_about_screen(canvas, title_font, body_font, logo, title, rows):
+def draw_about_screen(canvas, title_font, body_font, logo, title, rows, scale=1.0):
     """`rows` is a list of (label, value) -- labels right-aligned in an
     orange column, values left-aligned in white beside them, the block
     centered in the space between the title and the logo. A row with an
-    empty label continues the previous row's value column."""
+    empty label continues the previous row's value column. `scale`
+    multiplies the margins and gaps (fonts and logo arrive pre-scaled)."""
     frame_w, frame_h = canvas.get_size()
+    margin_y = round(ABOUT_MARGIN_Y * scale)
     canvas.fill(BLACK)
     title_surf = title_font.render(title, True, ORANGE)
-    canvas.blit(title_surf, ((frame_w - title_surf.get_width()) // 2, ABOUT_MARGIN_Y))
-    top = ABOUT_MARGIN_Y + title_surf.get_height()
-    bottom = frame_h - ABOUT_MARGIN_Y
+    canvas.blit(title_surf, ((frame_w - title_surf.get_width()) // 2, margin_y))
+    top = margin_y + title_surf.get_height()
+    bottom = frame_h - margin_y
     if logo is not None:
         bottom -= logo.get_height()
         canvas.blit(logo, ((frame_w - logo.get_width()) // 2, bottom))
@@ -241,13 +293,14 @@ def draw_about_screen(canvas, title_font, body_font, logo, title, rows):
     value_surfs = [body_font.render(str(value), True, WHITE) for _, value in rows]
     label_w = max((l.get_width() for l in label_surfs if l), default=0)
     value_w = max(v.get_width() for v in value_surfs)
-    line_h = body_font.get_linesize() + ABOUT_LINE_GAP
-    x0 = (frame_w - (label_w + ABOUT_COLUMN_GAP + value_w)) // 2
+    line_h = body_font.get_linesize() + round(ABOUT_LINE_GAP * scale)
+    col_gap = round(ABOUT_COLUMN_GAP * scale)
+    x0 = (frame_w - (label_w + col_gap + value_w)) // 2
     y = top + (bottom - top - line_h * len(rows)) // 2
     for label_surf, value_surf in zip(label_surfs, value_surfs):
         if label_surf:
             canvas.blit(label_surf, (x0 + label_w - label_surf.get_width(), y))
-        canvas.blit(value_surf, (x0 + label_w + ABOUT_COLUMN_GAP, y))
+        canvas.blit(value_surf, (x0 + label_w + col_gap, y))
         y += line_h
 
 
@@ -273,7 +326,16 @@ class BarsApp:
         signal.signal(signal.SIGINT, self._handle_signal)
 
         pygame.init()
-        pygame.display.set_mode((FRAME_W, FRAME_H))  # headless (dummy driver); needed for .convert()
+        self.fb = FrameBuffer()
+        # HD when settings.ini asks for it (or `auto` on a 16:9 screen) and
+        # there are HD patterns to show; SD otherwise.
+        self.display_setting = get_display_setting()
+        hd_paths = load_pattern_paths(hd=True)
+        want_hd = self.display_setting == "hd" or (self.display_setting == "auto" and self.fb.wide)
+        self.hd = want_hd and bool(hd_paths)
+        self.frame_w, self.frame_h = (HD_FRAME_W, HD_FRAME_H) if self.hd else (FRAME_W, FRAME_H)
+        self.ui_scale = self.frame_h / FRAME_H  # fonts, padding and margins grow with the canvas
+        pygame.display.set_mode((self.frame_w, self.frame_h))  # headless (dummy driver); needed for .convert()
 
         try:
             pygame.mixer.init(frequency=TONE_SAMPLE_RATE, size=-16, channels=2)
@@ -282,24 +344,23 @@ class BarsApp:
             print(f"Audio init failed, tone disabled: {exc}", file=sys.stderr)
             self.audio_ok = False
 
-        self.fb = FrameBuffer()
-
         self.kbd_devices = find_keyboard_devices()
         self.selector = selectors.DefaultSelector()
         for dev in self.kbd_devices:
             self.selector.register(dev, selectors.EVENT_READ)
 
-        self.pattern_paths = load_pattern_paths()
+        self.pattern_paths = hd_paths if self.hd else load_pattern_paths()
         # Always start on whichever pattern sorts first by the patterns
         # folder's own BARS_NNNN_ numbering (SMPTE bars) -- pattern choice
         # is a runtime-only setting, not persisted across launches.
         self.index = 0
         self.image_cache = {}
 
-        self.dialog_font = pygame.font.Font(str(FONT_PATH), 32)
-        self.osd_font = pygame.font.Font(str(FONT_PATH), 36)
-        self.about_body_font = pygame.font.Font(str(FONT_PATH), 26)
-        self.about_logo = load_about_logo()
+        s = self.ui_scale
+        self.dialog_font = pygame.font.Font(str(FONT_PATH), round(32 * s))
+        self.osd_font = pygame.font.Font(str(FONT_PATH), round(36 * s))
+        self.about_body_font = pygame.font.Font(str(FONT_PATH), round(26 * s))
+        self.about_logo = load_about_logo(self.hd, s)
         self.about_active = False
 
         self.overlay = None  # None, "ip", "hostname", or "custom"
@@ -340,26 +401,35 @@ class BarsApp:
         return img
 
     def build_pattern_canvas(self):
-        canvas = pygame.Surface((FRAME_W, FRAME_H))
-        canvas.blit(self.current_image(), (0, 0))
+        canvas = pygame.Surface((self.frame_w, self.frame_h))
+        img = self.current_image()
+        if img.get_size() != canvas.get_size():  # a pattern drawn at some other size
+            img = pygame.transform.smoothscale(img, canvas.get_size())
+        canvas.blit(img, (0, 0))
         return canvas
+
+    def px(self, value):
+        """An SD (480-line) pixel measurement, scaled to this canvas."""
+        return round(value * self.ui_scale)
 
     def draw_osd_box(self, canvas, text):
         text_surf = self.osd_font.render(text, True, WHITE)
-        pad_x, pad_y = 20, 12
+        pad_x, pad_y = self.px(20), self.px(12)
         box = pygame.Surface((text_surf.get_width() + pad_x * 2, text_surf.get_height() + pad_y * 2))
         box.fill(BLACK)
         box.blit(text_surf, (pad_x, pad_y))
-        canvas.blit(box, ((FRAME_W - box.get_width()) // 2, (FRAME_H - box.get_height()) // 2))
+        canvas.blit(box, ((self.frame_w - box.get_width()) // 2, (self.frame_h - box.get_height()) // 2))
 
     def render(self):
         if self.about_active:
-            canvas = pygame.Surface((FRAME_W, FRAME_H))
+            canvas = pygame.Surface((self.frame_w, self.frame_h))
+            display = f"HD {self.frame_w}X{self.frame_h}" if self.hd else "SD"
             draw_about_screen(canvas, self.osd_font, self.about_body_font, self.about_logo,
                               f"BARS ULRICH {VERSION}", [
                                   ("CUSTOM TEXT", get_custom_text()),
                                   ("PATTERNS", len(self.pattern_paths)),
-                              ])
+                                  ("DISPLAY", display),
+                              ], scale=self.ui_scale)
             if self.power_dialog_active:
                 self.draw_power_dialog(canvas)
             self.fb.write_surface(canvas)
@@ -386,31 +456,32 @@ class BarsApp:
             for i, opt in enumerate(POWER_OPTIONS)
         ]
 
-        pad_x, pad_y, gap = 40, 24, 40
+        px = self.px
+        pad_x, pad_y, gap = px(40), px(24), px(40)
         options_w = sum(s.get_width() for s in option_surfs) + gap * (len(option_surfs) - 1)
         content_w = max(max(s.get_width() for s in line_surfs), options_w)
-        content_h = (sum(s.get_height() for s in line_surfs) + 10 * (len(line_surfs) - 1)
-                     + 30 + option_surfs[0].get_height())
+        content_h = (sum(s.get_height() for s in line_surfs) + px(10) * (len(line_surfs) - 1)
+                     + px(30) + option_surfs[0].get_height())
 
         box = pygame.Surface((content_w + pad_x * 2, content_h + pad_y * 2))
         box.fill(BLACK)
-        pygame.draw.rect(box, ORANGE, box.get_rect(), 3)
+        pygame.draw.rect(box, ORANGE, box.get_rect(), px(3))
 
         y = pad_y
         for surf in line_surfs:
             box.blit(surf, ((box.get_width() - surf.get_width()) // 2, y))
-            y += surf.get_height() + 10
-        y += 20
+            y += surf.get_height() + px(10)
+        y += px(20)
 
         x = (box.get_width() - options_w) // 2
         for i, surf in enumerate(option_surfs):
             if i == self.power_dialog_selection:
-                highlight = pygame.Rect(x - 10, y - 6, surf.get_width() + 20, surf.get_height() + 12)
+                highlight = pygame.Rect(x - px(10), y - px(6), surf.get_width() + px(20), surf.get_height() + px(12))
                 pygame.draw.rect(box, ORANGE, highlight)
             box.blit(surf, (x, y))
             x += surf.get_width() + gap
 
-        canvas.blit(box, ((FRAME_W - box.get_width()) // 2, (FRAME_H - box.get_height()) // 2))
+        canvas.blit(box, ((canvas.get_width() - box.get_width()) // 2, (canvas.get_height() - box.get_height()) // 2))
 
     def set_tone(self, on):
         if not self.audio_ok or on == self.tone_playing:
